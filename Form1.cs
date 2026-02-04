@@ -9,17 +9,22 @@ using Newtonsoft.Json.Linq;
 
 namespace LogParserTool {
     public partial class Form1 : Form {
-        // === 核心控件 ===
+        // === 布局核心 ===
+        private TableLayoutPanel mainLayout; 
+        private SplitContainer splitCenter;  
+        
+        // === 控件 ===
         private TreeView tvMain;
-        private Panel rightPanel;
-
-        // === 顶部筛选控件 ===
+        private StatusStrip statusStrip;
+        private ToolStripStatusLabel lblStatus;
+        
+        // 顶部筛选
         private ComboBox cmbFilter;
         private TextBox txtSearch;
         private TextBox txtPid;
-        private Label lblStatus;
+        private Button btnShowErrors; // 新增的报错筛选按钮
 
-        // === 右侧工具控件 ===
+        // 右侧工具
         private TextBox txtTsInput;
         private TextBox txtDateResult;
         private DateTimePicker dtpDateInput;
@@ -27,422 +32,321 @@ namespace LogParserTool {
         private RadioButton rbSec;
         private RadioButton rbMs;
 
-        // === 数据源 ===
+        // 数据源
         private List<GameLogItem> _allLogs = new List<GameLogItem>();
+        private bool _isErrorFilterMode = false; // 标记是否处于“只看报错”模式
 
         public Form1() {
-            this.Size = new Size(1300, 850);
+            this.Size = new Size(1400, 900);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.Text = "Unity 日志分析器 (稳定布局版)";
-
-            BuildUI();
+            this.Text = "Unity 日志分析器 (SendGrpc优化版)";
+            
+            InitializeComponent();
         }
 
-        private void BuildUI() {
-            // ---------------------------------------------------------
-            // 1. 顶部操作栏 (Dock = Top)
-            // ---------------------------------------------------------
-            Panel topPanel = new Panel {
-                Dock = DockStyle.Top, Height = 60, BackColor = Color.WhiteSmoke, Padding = new Padding(10)
-            };
+        private void InitializeComponent() {
+            // 1. 初始化全局表格布局
+            mainLayout = new TableLayoutPanel();
+            mainLayout.Dock = DockStyle.Fill;
+            mainLayout.ColumnCount = 1;
+            mainLayout.RowCount = 3;
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 60F)); 
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); 
+            mainLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));      
+            this.Controls.Add(mainLayout);
 
-            Button btnLoad = new Button {
-                Text = "📂 导入",
-                Left = 15,
-                Top = 15,
-                Width = 80,
-                Height = 30,
-                BackColor = Color.White
-            };
-            btnLoad.Click += (s, e) => OpenLogFile();
+            // 2. 顶部面板
+            Panel topPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.WhiteSmoke, Padding = new Padding(5) };
+            BuildTopPanel(topPanel);
+            mainLayout.Controls.Add(topPanel, 0, 0);
 
-            Button btnExpand = new Button {
-                Text = "展开",
-                Left = 100,
-                Top = 15,
-                Width = 60,
-                Height = 30,
-                BackColor = Color.White
+            // 3. 中间区域
+            splitCenter = new SplitContainer { 
+                Dock = DockStyle.Fill, 
+                Orientation = Orientation.Vertical, 
+                SplitterDistance = 1000,
+                FixedPanel = FixedPanel.Panel2 
             };
-            btnExpand.Click += (s, e) => {
-                tvMain.BeginUpdate();
-                tvMain.ExpandAll();
-                tvMain.EndUpdate();
-            };
+            mainLayout.Controls.Add(splitCenter, 0, 1);
 
-            Button btnCollapse = new Button {
-                Text = "折叠",
-                Left = 165,
-                Top = 15,
-                Width = 60,
-                Height = 30,
-                BackColor = Color.White
-            };
-            btnCollapse.Click += (s, e) => {
-                tvMain.BeginUpdate();
-                tvMain.CollapseAll();
-                tvMain.EndUpdate();
-            };
+            // 4. 底部状态栏
+            statusStrip = new StatusStrip { Dock = DockStyle.Fill };
+            lblStatus = new ToolStripStatusLabel { Text = "就绪" };
+            statusStrip.Items.Add(lblStatus);
+            mainLayout.Controls.Add(statusStrip, 0, 2);
 
-            Label lblType = new Label {
-                Text = "类型:", Left = 240, Top = 22, AutoSize = true
-            };
-            cmbFilter = new ComboBox {
-                Left = 280, Top = 18, Width = 120, DropDownStyle = ComboBoxStyle.DropDownList
-            };
-            cmbFilter.Items.AddRange(new string[] {
-                "All",
-                "LoginBattlefield",
-                "DoType1",
-                "SendGrpc",        // <--- 新增
-                "DoType2",
-                "DoType3",
-                "GRPC",
-                "JsonLog",
-                "Error",
-                "System"
-            });
-            cmbFilter.SelectedIndex = 0;
-            cmbFilter.SelectedIndexChanged += (s, e) => RenderLogs();
-
-            Label lblPid = new Label {
-                Text = "PID:",
-                Left = 410,
-                Top = 22,
-                AutoSize = true,
-                ForeColor = Color.DarkBlue
-            };
-            txtPid = new TextBox {
-                Left = 445, Top = 18, Width = 100
-            };
-            txtPid.TextChanged += (s, e) => RenderLogs();
-
-            Label lblSearch = new Label {
-                Text = "搜索:", Left = 560, Top = 22, AutoSize = true
-            };
-            txtSearch = new TextBox {
-                Left = 600, Top = 18, Width = 150
-            };
-            txtSearch.KeyDown += (s, e) => {
-                if (e.KeyCode == Keys.Enter)
-                    RenderLogs();
-            };
-
-            Button btnSearch = new Button {
-                Text = "Go",
-                Left = 760,
-                Top = 17,
-                Width = 40,
-                Height = 23
-            };
-            btnSearch.Click += (s, e) => RenderLogs();
-
-            lblStatus = new Label {
-                Text = "准备就绪",
-                Left = 820,
-                Top = 22,
-                AutoSize = true,
-                ForeColor = Color.Gray
-            };
-
-            topPanel.Controls.AddRange(new Control[] {
-                btnLoad, btnExpand, btnCollapse, lblType, cmbFilter, lblPid, txtPid, lblSearch, txtSearch, btnSearch, lblStatus
-            });
-
-            // ---------------------------------------------------------
-            // 2. 右侧工具栏 (Dock = Right)
-            //    直接固定宽度，不使用 SplitContainer 避免崩溃
-            // ---------------------------------------------------------
-            rightPanel = new Panel {
-                Dock = DockStyle.Right, Width = 340, BackColor = Color.WhiteSmoke, Padding = new Padding(10)
-            };
-            BuildRightTools(rightPanel);
-
-            // ---------------------------------------------------------
-            // 3. 左侧 TreeView (Dock = Fill)
-            //    自动填充剩余空间
-            // ---------------------------------------------------------
+            // === 填充中间区域 ===
             tvMain = new TreeView {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Fill, 
                 BackColor = Color.White,
-                ForeColor = Color.Black,
                 Font = new Font("Consolas", 10),
                 ShowLines = true,
                 ShowPlusMinus = true,
-                ShowRootLines = true,
-                AllowDrop = true,
-                BorderStyle = BorderStyle.FixedSingle // 加个边框好看点
-            };
-
-            // 拖拽事件
-            tvMain.DragEnter += (s, e) => {
-                if (e.Data.GetDataPresent(DataFormats.FileDrop))
-                    e.Effect = DragDropEffects.Copy;
-            };
-            tvMain.DragDrop += (s, e) => {
-                string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
-                if (files.Length > 0)
-                    ProcessFile(files[0]);
+                BorderStyle = BorderStyle.None,
+                HideSelection = false 
             };
             tvMain.BeforeExpand += TvMain_BeforeExpand;
+            
+            var ctx = new ContextMenuStrip();
+            ctx.Items.Add("📄 复制当前行", null, (s, e) => CopyNodeText(tvMain.SelectedNode));
+            ctx.Items.Add("🌳 复制完整日志", null, (s, e) => CopyFullLog());
+            tvMain.ContextMenuStrip = ctx;
+            tvMain.KeyDown += (s, e) => { if (e.Control && e.KeyCode == Keys.C) CopyNodeText(tvMain.SelectedNode); };
 
-            // 复制事件
-            tvMain.KeyDown += (s, e) => {
-                if (e.Control && e.KeyCode == Keys.C)
-                    CopySelectedNode();
+            splitCenter.Panel1.Controls.Add(tvMain);
+
+            Panel rightToolPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.AliceBlue, Padding = new Padding(10) };
+            BuildRightTools(rightToolPanel);
+            splitCenter.Panel2.Controls.Add(rightToolPanel);
+        }
+
+        private void BuildTopPanel(Panel panel) {
+            int x = 10, y = 15;
+
+            Button btnLoad = new Button { Text = "📂 导入", Location = new Point(x, y), Size = new Size(80, 30), BackColor = Color.White };
+            btnLoad.Click += (s, e) => OpenLogFile();
+            panel.Controls.Add(btnLoad); x += 90;
+
+            Button btnExp = new Button { Text = "展开", Location = new Point(x, y), Size = new Size(50, 30) };
+            btnExp.Click += (s, e) => { tvMain.BeginUpdate(); tvMain.ExpandAll(); tvMain.EndUpdate(); };
+            panel.Controls.Add(btnExp); x += 60;
+
+            Button btnCol = new Button { Text = "折叠", Location = new Point(x, y), Size = new Size(50, 30) };
+            btnCol.Click += (s, e) => { tvMain.BeginUpdate(); tvMain.CollapseAll(); tvMain.EndUpdate(); };
+            panel.Controls.Add(btnCol); x += 70;
+
+            Label div1 = new Label { Text = "|", Location = new Point(x, y + 5), AutoSize = true, ForeColor = Color.Gray };
+            panel.Controls.Add(div1); x += 20;
+
+            panel.Controls.Add(new Label { Text = "类型:", Location = new Point(x, y + 5), AutoSize = true });
+            x += 40;
+            cmbFilter = new ComboBox { Location = new Point(x, y + 2), Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
+            cmbFilter.Items.Add("All");
+            cmbFilter.SelectedIndex = 0;
+            cmbFilter.SelectedIndexChanged += (s, e) => {
+                _isErrorFilterMode = false; // 切换类型时，自动退出“报错模式”
+                btnShowErrors.BackColor = Color.WhiteSmoke;
+                RenderLogs();
             };
-            var ctxMenu = new ContextMenuStrip();
-            ctxMenu.Items.Add("📄 复制当前行", null, (s, e) => CopySelectedNode());
-            ctxMenu.Items.Add("🌳 复制完整日志", null, (s, e) => CopyFullLog());
-            tvMain.ContextMenuStrip = ctxMenu;
+            panel.Controls.Add(cmbFilter); x += 150;
 
-            // ---------------------------------------------------------
-            // 4. 按顺序添加控件 (重要：先加边缘 Dock，最后加 Fill)
-            // ---------------------------------------------------------
-            this.Controls.Add(tvMain); // Fill (最后占据中间)
-            this.Controls.Add(rightPanel); // Right
-            this.Controls.Add(topPanel); // Top
+            // === 新增：报错筛选按钮 ===
+            btnShowErrors = new Button { 
+                Text = "🔴 仅看报错", 
+                Location = new Point(x, y), 
+                Size = new Size(80, 30), 
+                BackColor = Color.WhiteSmoke,
+                ForeColor = Color.Red,
+                FlatStyle = FlatStyle.Flat
+            };
+            btnShowErrors.Click += (s, e) => ToggleErrorMode();
+            panel.Controls.Add(btnShowErrors); x += 90;
 
-            // 强制调整 Z-Order，确保 TopPanel 在最上面，RightPanel 在右边，TV 在底层铺满
-            topPanel.BringToFront();
-            rightPanel.BringToFront();
+            panel.Controls.Add(new Label { Text = "PID:", Location = new Point(x, y + 5), AutoSize = true, ForeColor = Color.Blue });
+            x += 35;
+            txtPid = new TextBox { Location = new Point(x, y + 2), Width = 80 };
+            txtPid.TextChanged += (s, e) => RenderLogs();
+            panel.Controls.Add(txtPid); x += 90;
+
+            panel.Controls.Add(new Label { Text = "搜索:", Location = new Point(x, y + 5), AutoSize = true });
+            x += 40;
+            txtSearch = new TextBox { Location = new Point(x, y + 2), Width = 150 };
+            txtSearch.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) RenderLogs(); };
+            panel.Controls.Add(txtSearch); x += 160;
+
+            Button btnGo = new Button { Text = "Go", Location = new Point(x, y), Size = new Size(40, 25) };
+            btnGo.Click += (s, e) => RenderLogs();
+            panel.Controls.Add(btnGo);
         }
 
-        // ==========================================
-        // 复制逻辑
-        // ==========================================
-        private void CopySelectedNode() {
-            if (tvMain.SelectedNode != null && tvMain.SelectedNode.Text != "Loading...") {
-                Clipboard.SetText(tvMain.SelectedNode.Text);
-                lblStatus.Text = "已复制";
-            }
-        }
-
-        private void CopyFullLog() {
-            if (tvMain.SelectedNode != null) {
-                TreeNode root = tvMain.SelectedNode;
-                while (root.Parent != null)
-                    root = root.Parent;
-                if (root.Tag is GameLogItem item) {
-                    Clipboard.SetText(string.IsNullOrEmpty(item.PrettyContent)? item.RawContent : item.PrettyContent);
-                    lblStatus.Text = "完整日志已复制";
-                }
-            }
-        }
-
-        // ==========================================
-        // 右侧工具栏构建
-        // ==========================================
         private void BuildRightTools(Panel panel) {
-            GroupBox gbTools = new GroupBox {
-                Text = "⏱️ 时间戳工具", Dock = DockStyle.Top, Height = 350, Font = new Font("Microsoft YaHei", 9)
-            };
+            GroupBox gb = new GroupBox { Text = "时间戳转换", Dock = DockStyle.Top, Height = 400, Font = new Font("Microsoft YaHei", 9) };
+            
+            int y = 30;
+            rbSec = new RadioButton { Text = "秒(10位)", Location = new Point(20, y), Checked = true, AutoSize = true };
+            rbMs = new RadioButton { Text = "毫秒(13位)", Location = new Point(120, y), AutoSize = true };
+            gb.Controls.Add(rbSec); gb.Controls.Add(rbMs); y += 40;
 
-            Label lblUnit = new Label {
-                Text = "单位:", Left = 15, Top = 30, AutoSize = true
-            };
-            rbSec = new RadioButton {
-                Text = "秒(10位)",
-                Left = 60,
-                Top = 28,
-                Checked = true,
-                AutoSize = true
-            };
-            rbMs = new RadioButton {
-                Text = "毫秒(13位)", Left = 140, Top = 28, AutoSize = true
-            };
-
-            Label lblPart1 = new Label {
-                Text = "--- 时间戳 ➔ 日期 ---",
-                Left = 15,
-                Top = 60,
-                ForeColor = Color.Blue,
-                AutoSize = true
-            };
-            txtTsInput = new TextBox {
-                Left = 15, Top = 85, Width = 200, Text = DateTimeOffset.Now.ToUnixTimeSeconds().ToString()
-            };
-            Button btnTsToDate = new Button {
-                Text = "转换 ⬇", Left = 15, Top = 115, Width = 200
-            };
-            txtDateResult = new TextBox {
-                Left = 15,
-                Top = 145,
-                Width = 200,
-                ReadOnly = true,
-                BackColor = Color.White
-            };
-
-            Label lblPart2 = new Label {
-                Text = "--- 日期 ➔ 时间戳 ---",
-                Left = 15,
-                Top = 185,
-                ForeColor = Color.Blue,
-                AutoSize = true
-            };
-            dtpDateInput = new DateTimePicker {
-                Left = 15,
-                Top = 210,
-                Width = 200,
-                Format = DateTimePickerFormat.Custom,
-                CustomFormat = "yyyy-MM-dd HH:mm:ss"
-            };
-            Button btnDateToTs = new Button {
-                Text = "转换 ⬇", Left = 15, Top = 240, Width = 200
-            };
-            txtTsResult = new TextBox {
-                Left = 15,
-                Top = 270,
-                Width = 200,
-                ReadOnly = true,
-                BackColor = Color.White
-            };
-            Button btnCopyTs = new Button {
-                Text = "复制", Left = 15, Top = 300, Width = 200
-            };
-
-            btnTsToDate.Click += (s, e) => ConvertTsToDate();
-            btnDateToTs.Click += (s, e) => ConvertDateToTs();
-            btnCopyTs.Click += (s, e) => {
-                if (!string.IsNullOrEmpty(txtTsResult.Text))
-                    Clipboard.SetText(txtTsResult.Text);
-            };
-
-            gbTools.Controls.AddRange(new Control[] {
-                lblUnit, rbSec, rbMs, lblPart1, txtTsInput, btnTsToDate, txtDateResult, lblPart2, dtpDateInput, btnDateToTs, txtTsResult, btnCopyTs
-            });
-
-            panel.Controls.Add(gbTools);
-        }
-
-        private void ConvertTsToDate() {
-            if (long.TryParse(txtTsInput.Text.Trim(), out long ts)) {
-                try {
-                    DateTimeOffset dateTime;
-                    if (rbSec.Checked)
-                        dateTime = DateTimeOffset.FromUnixTimeSeconds(ts);
-                    else
-                        dateTime = DateTimeOffset.FromUnixTimeMilliseconds(ts);
-                    txtDateResult.Text = dateTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
-                } catch {
-                    txtDateResult.Text = "无效";
+            gb.Controls.Add(new Label { Text = "时间戳 ➔ 日期", Location = new Point(20, y), ForeColor = Color.Blue, AutoSize = true }); y += 25;
+            txtTsInput = new TextBox { Location = new Point(20, y), Width = 200, Text = DateTimeOffset.Now.ToUnixTimeSeconds().ToString() }; y += 30;
+            Button btn1 = new Button { Text = "转换", Location = new Point(20, y), Width = 80 };
+            btn1.Click += (s, e) => {
+                if (long.TryParse(txtTsInput.Text, out long ts)) {
+                    var dt = rbSec.Checked ? DateTimeOffset.FromUnixTimeSeconds(ts) : DateTimeOffset.FromUnixTimeMilliseconds(ts);
+                    txtDateResult.Text = dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
                 }
+            };
+            gb.Controls.Add(btn1); y += 35;
+            txtDateResult = new TextBox { Location = new Point(20, y), Width = 200, ReadOnly = true }; y += 40;
+
+            gb.Controls.Add(new Label { Text = "日期 ➔ 时间戳", Location = new Point(20, y), ForeColor = Color.Blue, AutoSize = true }); y += 25;
+            dtpDateInput = new DateTimePicker { Location = new Point(20, y), Width = 200, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd HH:mm:ss" }; y += 30;
+            Button btn2 = new Button { Text = "转换", Location = new Point(20, y), Width = 80 };
+            btn2.Click += (s, e) => {
+                long ts = rbSec.Checked ? new DateTimeOffset(dtpDateInput.Value).ToUnixTimeSeconds() : new DateTimeOffset(dtpDateInput.Value).ToUnixTimeMilliseconds();
+                txtTsResult.Text = ts.ToString();
+            };
+            gb.Controls.Add(btn2); y += 35;
+            txtTsResult = new TextBox { Location = new Point(20, y), Width = 200, ReadOnly = true }; y += 40;
+
+            panel.Controls.Add(gb);
+        }
+
+        private void ToggleErrorMode() {
+            _isErrorFilterMode = !_isErrorFilterMode;
+            if (_isErrorFilterMode) {
+                btnShowErrors.BackColor = Color.MistyRose; // 激活状态变色
+                btnShowErrors.Text = "🔴 取消报错";
+            } else {
+                btnShowErrors.BackColor = Color.WhiteSmoke;
+                btnShowErrors.Text = "🔴 仅看报错";
             }
+            RenderLogs();
         }
 
-        private void ConvertDateToTs() {
-            long ts = rbSec.Checked? new DateTimeOffset(dtpDateInput.Value).ToUnixTimeSeconds() : new DateTimeOffset(dtpDateInput.Value).ToUnixTimeMilliseconds();
-            txtTsResult.Text = ts.ToString();
-        }
-
-        // ==========================================
-        // 日志加载与渲染
-        // ==========================================
         private void OpenLogFile() {
             OpenFileDialog ofd = new OpenFileDialog();
-            if (ofd.ShowDialog() == DialogResult.OK)
-                ProcessFile(ofd.FileName);
-        }
+            if (ofd.ShowDialog() == DialogResult.OK) {
+                lblStatus.Text = "正在解析...";
+                Application.DoEvents(); 
+                
+                try {
+                    string text = File.ReadAllText(ofd.FileName);
+                    var chunks = LogParser.SmartSplit(text);
+                    _allLogs.Clear();
+                    
+                    HashSet<string> cats = new HashSet<string> { "All" };
+                    int idx = 0;
+                    foreach (var c in chunks) {
+                        var item = LogParser.Parse(c, ++idx);
+                        _allLogs.Add(item);
+                        if (!string.IsNullOrEmpty(item.Category)) cats.Add(item.Category);
+                    }
 
-        private void ProcessFile(string path) {
-            lblStatus.Text = "读取中...";
-            Application.DoEvents();
-            try {
-                string fullText = File.ReadAllText(path);
-                // SmartSplit 必须确保 LogModels.cs 里的代码已经更新
-                var rawChunks = LogParser.SmartSplit(fullText);
-                _allLogs.Clear();
-                int idx = 0;
-                foreach (var chunk in rawChunks)
-                    _allLogs.Add(LogParser.Parse(chunk, ++idx));
-                lblStatus.Text = $"解析完成: {_allLogs.Count} 条";
-                RenderLogs();
-            } catch (Exception ex) {
-                MessageBox.Show("出错: " + ex.Message);
+                    cmbFilter.Items.Clear();
+                    cmbFilter.Items.AddRange(cats.OrderBy(c => c == "All" ? 0 : 1).ThenBy(c => c).ToArray());
+                    cmbFilter.SelectedIndex = 0;
+
+                    RenderLogs();
+                } catch (Exception ex) { MessageBox.Show("解析失败: " + ex.Message); }
             }
         }
 
         private void RenderLogs() {
-            tvMain.BeginUpdate();
-            tvMain.Nodes.Clear();
-            string filterCat = cmbFilter.SelectedItem?.ToString() ?? "All";
-            string pidKey = txtPid.Text.Trim();
-            string searchKey = txtSearch.Text.Trim().ToLower();
+            // 1. 基础过滤条件
+            string cat = cmbFilter.SelectedItem?.ToString() ?? "All";
+            string pid = txtPid.Text.Trim();
+            string search = txtSearch.Text.Trim().ToLower();
 
-            var filtered = _allLogs.Where(x => {
-                bool catMatch = filterCat == "All" || x.Category == filterCat;
-                bool pidMatch = string.IsNullOrEmpty(pidKey) || (x.PID != null && x.PID.Contains(pidKey));
-                bool textMatch = string.IsNullOrEmpty(searchKey) || x.RawContent.ToLower().Contains(searchKey) || (x.PrettyContent != null && x.PrettyContent.ToLower().Contains(searchKey));
-                return catMatch && pidMatch && textMatch;
+            // 2. 筛选逻辑
+            var list = _allLogs.Where(x => {
+                // 如果开启了“只看报错”模式，强制覆盖 Category 筛选
+                if (_isErrorFilterMode) {
+                    bool isError = x.Category.IndexOf("Error", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   x.Category.IndexOf("Exception", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   x.RawContent.IndexOf("Error", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   x.RawContent.IndexOf("Exception", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   x.RawContent.IndexOf("NullReference", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                   x.RawContent.IndexOf("Fail", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if (!isError) return false;
+                } else {
+                    // 普通模式下的 Category 筛选
+                    if (cat != "All" && !string.Equals(x.Category, cat, StringComparison.OrdinalIgnoreCase)) return false;
+                }
+
+                // PID 和 搜索 是通用的
+                bool pidMatch = string.IsNullOrEmpty(pid) || (x.PID != null && x.PID.Contains(pid));
+                bool textMatch = string.IsNullOrEmpty(search) || x.RawContent.ToLower().Contains(search) || (x.PrettyContent != null && x.PrettyContent.ToLower().Contains(search));
+                
+                return pidMatch && textMatch;
             }).ToList();
 
-            if (filtered.Count > 2000)
-                lblStatus.Text = $"结果: {filtered.Count} (仅显示前2000条)";
-            else
-                lblStatus.Text = $"结果: {filtered.Count} 条";
+            lblStatus.Text = _isErrorFilterMode 
+                ? $"❗ 发现 {list.Count} 条报错信息" 
+                : $"共找到 {list.Count} 条日志 (仅显示前 2000 条)";
 
-            foreach (var item in filtered.Take(2000)) {
-                TreeNode rootNode = new TreeNode(item.HeaderInfo);
-                rootNode.Tag = item;
-                if (item.Category == "Error")
-                    rootNode.ForeColor = Color.Red;
-                else
-                    rootNode.ForeColor = Color.Blue;
-                rootNode.Nodes.Add(new TreeNode("Loading..."));
-                tvMain.Nodes.Add(rootNode);
-                if (!string.IsNullOrEmpty(searchKey))
-                    rootNode.Expand();
+            // 3. 渲染
+            tvMain.Visible = false; 
+            tvMain.Nodes.Clear();
+            
+            if (list.Count > 0) {
+                tvMain.BeginUpdate();
+                try {
+                    foreach (var item in list.Take(2000)) {
+                        TreeNode node = new TreeNode(item.HeaderInfo);
+                        node.Tag = item;
+                        
+                        if (item.Category.Contains("Error")) node.ForeColor = Color.Red;
+                        else if (item.Category == "System") node.ForeColor = Color.Gray;
+                        else node.ForeColor = Color.Blue;
+
+                        node.Nodes.Add(new TreeNode("Loading..."));
+                        tvMain.Nodes.Add(node);
+
+                        // 如果是搜索或报错模式，自动展开
+                        if (!string.IsNullOrEmpty(search) || _isErrorFilterMode) node.Expand();
+                    }
+                } finally {
+                    tvMain.EndUpdate();
+                }
             }
 
-            tvMain.EndUpdate();
+            tvMain.Visible = true;
+            if (tvMain.Nodes.Count > 0) {
+                tvMain.SelectedNode = tvMain.Nodes[0];
+                tvMain.Nodes[0].EnsureVisible();
+                tvMain.Focus();
+            }
         }
 
         private void TvMain_BeforeExpand(object sender, TreeViewCancelEventArgs e) {
-            TreeNode parent = e.Node;
-            if (parent.Nodes.Count == 1 && parent.Nodes[0].Text == "Loading...") {
-                parent.Nodes.Clear();
-                if (parent.Tag is GameLogItem item) {
+            TreeNode node = e.Node;
+            if (node.Nodes.Count == 1 && node.Nodes[0].Text == "Loading...") {
+                node.Nodes.Clear();
+                if (node.Tag is GameLogItem item) {
+                    string content = item.PrettyContent ?? item.RawContent;
                     try {
-                        if (item.PrettyContent != null && (item.PrettyContent.Trim().StartsWith("{") || item.PrettyContent.Trim().StartsWith("["))) {
-                            var token = JToken.Parse(item.PrettyContent);
-                            AddJsonToTree(token, parent);
-                        } else {
-                            string content = item.PrettyContent ?? item.RawContent;
-                            foreach (var line in content.Split('\n'))
-                                parent.Nodes.Add(new TreeNode(line));
+                        if (content.Trim().StartsWith("{") || content.Trim().StartsWith("[")) {
+                            var token = JToken.Parse(content);
+                            AddJsonNode(token, node);
+                            return;
                         }
-                    } catch {
-                        parent.Nodes.Add(new TreeNode(item.PrettyContent ?? item.RawContent));
-                    }
+                    } catch { }
+                    foreach (var line in content.Split('\n')) node.Nodes.Add(new TreeNode(line));
                 }
             }
         }
 
-        private void AddJsonToTree(JToken token, TreeNode parentNode) {
-            if (token == null)
-                return;
+        private void AddJsonNode(JToken token, TreeNode parent) {
             if (token is JValue) {
-                parentNode.Nodes.Add(new TreeNode(token.ToString()) {
-                    ForeColor = Color.Green
-                });
+                parent.Nodes.Add(new TreeNode(token.ToString()) { ForeColor = Color.Green });
             } else if (token is JObject obj) {
-                foreach (var property in obj.Properties()) {
-                    TreeNode childNode = new TreeNode(property.Name);
-                    if (property.Value is JValue) {
-                        childNode.Text += $": {property.Value}";
-                        childNode.ForeColor = Color.Black;
-                    } else
-                        AddJsonToTree(property.Value, childNode);
-
-                    parentNode.Nodes.Add(childNode);
+                foreach (var p in obj.Properties()) {
+                    TreeNode child = new TreeNode(p.Name);
+                    if (p.Value is JValue) {
+                        child.Text += $": {p.Value}";
+                        child.ForeColor = Color.Black;
+                    } else AddJsonNode(p.Value, child);
+                    parent.Nodes.Add(child);
                 }
-            } else if (token is JArray array) {
-                for (int i = 0; i < array.Count; i++) {
-                    TreeNode childNode = new TreeNode($"[{i}]");
-                    AddJsonToTree(array[i], childNode);
-                    parentNode.Nodes.Add(childNode);
+            } else if (token is JArray arr) {
+                for (int i = 0; i < arr.Count; i++) {
+                    TreeNode child = new TreeNode($"[{i}]");
+                    AddJsonNode(arr[i], child);
+                    parent.Nodes.Add(child);
                 }
             }
+        }
+
+        private void CopyNodeText(TreeNode node) {
+            if (node != null && node.Text != "Loading...") Clipboard.SetText(node.Text);
+        }
+
+        private void CopyFullLog() {
+            if (tvMain.SelectedNode?.Tag is GameLogItem item)
+                Clipboard.SetText(item.PrettyContent ?? item.RawContent);
+            else if (tvMain.SelectedNode?.Parent?.Tag is GameLogItem parentItem)
+                Clipboard.SetText(parentItem.PrettyContent ?? parentItem.RawContent);
         }
     }
 }
